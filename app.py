@@ -2,14 +2,39 @@ import streamlit as st
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import koreanize_matplotlib
-import re
+import os
+import matplotlib.font_manager as fm  # 폰트 매니저 추가
+import re  # <--- [중요] 이 줄이 반드시 있어야 합니다!
 
 # ---------------------------------------------------------
 # 1. 페이지 설정
 # ---------------------------------------------------------
 st.set_page_config(page_title="회원 데이터 분석", layout="wide")
 st.title("📊 학원 커리큘럼 분석 대시보드")
+
+@st.cache_data
+def font_setup():
+    # 리눅스(Streamlit Cloud) 환경인지 확인
+    if os.name == 'posix':
+        # packages.txt로 설치된 나눔고딕 폰트 경로
+        font_path = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
+        if os.path.exists(font_path):
+            fm.fontManager.addfont(font_path)
+            plt.rc('font', family='NanumGothic')
+        else:
+            # 폰트가 없을 경우를 대비해 기본 설정 유지 (에러 방지)
+            pass
+    else:
+        # 윈도우/맥(로컬) 환경일 경우
+        if os.name == 'nt': # Windows
+            plt.rc('font', family='Malgun Gothic')
+        elif os.name == 'darwin': # Mac
+            plt.rc('font', family='AppleGothic')
+            
+    plt.rcParams['axes.unicode_minus'] = False
+
+# 폰트 설정 실행
+font_setup()
 
 # ---------------------------------------------------------
 # 2. 파일 업로드 (사이드바)
