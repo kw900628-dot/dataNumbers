@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import re
-import io  # [중요] 파일 읽기 오류 해결을 위한 라이브러리
+import io
 
 # ---------------------------------------------------------
 # 1. 페이지 설정
@@ -11,7 +11,7 @@ st.set_page_config(page_title="회원 데이터 분석", layout="wide")
 st.title("📊 과정별 회원 수 분석 대시보드")
 
 # ---------------------------------------------------------
-# 2. 파일 업로드 (다중 파일 + 다중 시트 모두 지원)
+# 2. 파일 업로드
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("📂 Data Upload")
@@ -32,30 +32,27 @@ if not uploaded_files:
     st.stop()
 
 # ---------------------------------------------------------
-# 3. 데이터 처리 로직 (BytesIO로 완벽 해결)
+# 3. 데이터 처리 로직 (BytesIO + Hybrid)
 # ---------------------------------------------------------
 all_data = []
 progress_bar = st.progress(0)
 total_files = len(uploaded_files)
-
-# 오류 디버깅을 위한 리스트
 error_logs = []
 
 for i, file in enumerate(uploaded_files):
     try:
-        # [✨ 핵심 수정] 파일을 메모리(Bytes)로 먼저 읽어옵니다.
-        # 이렇게 하면 '파일을 이미 다 읽어서 못 읽는다'는 오류가 절대 발생하지 않습니다.
+        # [핵심] 파일을 메모리로 읽어서 포인터 오류 방지
         file_bytes = file.getvalue()
         excel_file = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
         
         sheet_names = excel_file.sheet_names
         
-        # 파일명에서 '월' 정보 미리 찾기
+        # 파일명에서 '월' 찾기
         file_month_match = re.search(r'(\d+)월', file.name)
         file_month = int(file_month_match.group(1)) if file_month_match else None
         
         for sheet_name in sheet_names:
-            # 시트 이름 분석
+            # 시트명에서 '월' 찾기
             sheet_month_strict = re.search(r'(\d+)월', sheet_name)
             
             if sheet_month_strict:
@@ -66,10 +63,9 @@ for i, file in enumerate(uploaded_files):
                 num_match = re.search(r'(\d+)', sheet_name)
                 month = int(num_match.group(1)) if num_match else 1
             
-            # [✨ 핵심 수정] 위에서 만든 excel_file 객체를 재사용
+            # 데이터 읽기
             df_temp = pd.read_excel(excel_file, sheet_name=sheet_name, index_col='커리큘럼')
             
-            # 데이터가 비어있지 않은지 확인
             if not df_temp.empty:
                 df_melted = df_temp.reset_index().melt(id_vars='커리큘럼', var_name='연령', value_name='회원 수')
                 df_melted['월'] = month
@@ -77,24 +73,16 @@ for i, file in enumerate(uploaded_files):
                 all_data.append(df_melted)
             
     except Exception as e:
-        error_msg = f"⚠️ '{file.name}' 처리 실패: {e}"
-        st.toast(error_msg)
-        error_logs.append(error_msg)
+        error_logs.append(f"'{file.name}' 처리 실패: {e}")
 
     progress_bar.progress((i + 1) / total_files)
 
-# ---------------------------------------------------------
-# 4. 데이터 병합 및 시각화 (오류 방지 코드 추가)
-# ---------------------------------------------------------
 if not all_data:
     st.error("❌ 처리할 수 있는 데이터가 없습니다.")
     if error_logs:
-        with st.expander("오류 상세 내용 보기"):
-            for log in error_logs:
-                st.write(log)
+        st.write(error_logs)
     st.stop()
 
-# 여기서 all_data가 비어있지 않음이 보장되므로 concat 오류가 나지 않습니다.
 df_total = pd.concat(all_data, ignore_index=True)
 
 # 정렬 및 카테고리화
@@ -106,7 +94,7 @@ df_total['연령'] = pd.Categorical(df_total['연령'], categories=age_order, or
 df_total['커리큘럼'] = pd.Categorical(df_total['커리큘럼'], categories=curriculum_order, ordered=True)
 df_total = df_total.sort_values(['월', '커리큘럼', '연령'])
 
-st.success(f"✅ 데이터 병합 완료! (총 {len(all_data)}개 데이터 세트 처리됨)")
+st.success(f"✅ 데이터 병합 완료! (총 {len(all_data)}개 데이터 세트)")
 progress_bar.empty()
 
 # ---------------------------------------------------------
@@ -126,7 +114,8 @@ age_color_map = {
     '성인': '#78909C' 
 }
 
-tab1, tab2, tab3, tab4 = st.tabs(["🔥 연령별 선호도", "📉 이탈 분석", "🗓️ 시즌성", "👥 인구 변화"])
+# [수정됨] 탭을 3개로 줄임 (이탈 분석 삭제)
+tab1, tab2, tab3 = st.tabs(["🔥 연령별 선호도", "🗓️ 시즌성", "👥 회원 구성 변화"])
 
 # [Tab 1] 연령별 선호도
 with tab1:
@@ -145,35 +134,48 @@ with tab1:
         fig = px.density_heatmap(group_data, x='과정 그룹', y='연령', z='회원 수', text_auto=True, color_continuous_scale='Blues')
         st.plotly_chart(fig, use_container_width=True)
 
-# [Tab 2] 이탈 분석
-with tab2:
-    st.subheader("커리큘럼별 회원 유지 현황")
-    ages = st.multiselect("분석할 연령대", age_order, default=['미취학', '8', '성인'])
-    if ages:
-        filtered_df = df_total[df_total['연령'].isin(ages)]
-        line_data = filtered_df.groupby(['커리큘럼', '연령'])['회원 수'].sum().reset_index()
-        
-        # 0인 데이터 숨기기
-        total_by_age = line_data.groupby('연령')['회원 수'].sum()
-        valid_ages = total_by_age[total_by_age > 0].index.tolist()
-        final_line_data = line_data[line_data['연령'].isin(valid_ages)]
-        
-        if not final_line_data.empty:
-            fig = px.line(final_line_data, x='커리큘럼', y='회원 수', color='연령', markers=True, color_discrete_map=age_color_map)
-            st.plotly_chart(fig, use_container_width=True)
+    # 💡 [인사이트]
+    st.markdown("### 💡 AI Data Insight")
+    top_ages = group_data.loc[group_data.groupby('과정 그룹')['회원 수'].idxmax()]
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**📌 과정별 주력 타깃 연령**")
+        for _, row in top_ages.iterrows():
+            st.write(f"- **{row['과정 그룹']}**: `{row['연령']}` ({row['회원 수']:,}명)")
+    with col2:
+        st.info("Tip: 그래프의 산이 가장 높게 솟은 지점이 핵심 타깃 연령입니다.")
 
-# [Tab 3] 시즌성 분석
-with tab3:
+# [Tab 2] 시즌성 분석 (기존 Tab 3)
+with tab2:
     st.subheader("과정별 월간 추이")
     trend_data = df_total.groupby(['월', '과정 그룹'])['회원 수'].sum().reset_index()
     fig = px.line(trend_data, x='월', y='회원 수', color='과정 그룹', markers=True, color_discrete_map=process_color_map)
     fig.update_xaxes(tickvals=list(range(1, 13)), range=[0.5, 12.5], title_text="월 (Month)")
     st.plotly_chart(fig, use_container_width=True)
+    
+    # 💡 [인사이트]
+    st.markdown("### 💡 Seasonality Insight")
+    if df_total['월'].nunique() > 1:
+        peak_months = trend_data.loc[trend_data.groupby('과정 그룹')['회원 수'].idxmax()]
+        cols = st.columns(4)
+        for idx, (_, row) in enumerate(peak_months.iterrows()):
+            with cols[idx % 4]:
+                st.metric(label=f"{row['과정 그룹']} 피크", value=f"{row['월']}월", delta=f"{row['회원 수']:,}명")
+    else:
+        st.info("ℹ️ 현재 1개월치 데이터만 있습니다. 여러 달의 데이터를 업로드하면 추세선이 연결됩니다.")
 
-# [Tab 4] 인구 변화 분석
-with tab4:
+# [Tab 3] 회원 구성 변화 (기존 Tab 4)
+with tab3:
     st.subheader("월별 회원 구성비 변화")
     bar_data = df_total.groupby(['월', '연령'])['회원 수'].sum().reset_index()
     fig = px.bar(bar_data, x='월', y='회원 수', color='연령', text_auto=True, color_discrete_map=age_color_map)
     fig.update_xaxes(dtick=1)
     st.plotly_chart(fig, use_container_width=True)
+    
+    # 💡 [인사이트]
+    st.markdown("### 💡 Demographic Shift")
+    last_month = df_total['월'].max()
+    last_month_data = bar_data[bar_data['월'] == last_month]
+    top_age = last_month_data.loc[last_month_data['회원 수'].idxmax()]
+    
+    st.info(f"📊 **최신 트렌드 ({last_month}월):** 가장 비중이 큰 연령대는 **'{top_age['연령']}'** 입니다.")
