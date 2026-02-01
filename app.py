@@ -31,7 +31,7 @@ if not uploaded_files:
     st.stop()
 
 # ---------------------------------------------------------
-# 3. 데이터 처리 로직 (수정됨: 파일명 우선순위 강화)
+# 3. 데이터 처리 로직 (수정됨: 파일 스트림 초기화 문제 해결)
 # ---------------------------------------------------------
 all_data = []
 progress_bar = st.progress(0)
@@ -39,31 +39,28 @@ total_files = len(uploaded_files)
 
 for i, file in enumerate(uploaded_files):
     try:
+        # 엑셀 파일을 한 번 엽니다 (xls 변수에 저장)
         xls = pd.ExcelFile(file, engine='openpyxl')
         sheet_names = xls.sheet_names
         
-        # [수정 1] 파일명에서 '월'이 붙은 숫자만 확실하게 찾기 (연도 '2025' 혼동 방지)
+        # 파일명에서 '월' 정보 미리 찾기
         file_month_match = re.search(r'(\d+)월', file.name)
         file_month = int(file_month_match.group(1)) if file_month_match else None
         
         for sheet_name in sheet_names:
-            # [수정 2] 시트 이름 분석 로직 개선
-            # 시트 이름에 명확히 'N월'이라고 적혀 있는지 확인
+            # 시트 이름 분석
             sheet_month_strict = re.search(r'(\d+)월', sheet_name)
             
             if sheet_month_strict:
-                # 1순위: 시트 이름에 '월'이 있으면 무조건 그걸 따름 (시트별로 월이 다른 경우)
                 month = int(sheet_month_strict.group(1))
             elif file_month:
-                # 2순위: 시트 이름이 애매하면(Sheet1 등), 파일명에 있는 '월'을 따름
                 month = file_month
             else:
-                # 3순위: 둘 다 없으면 시트 이름의 숫자라도 가져옴 (최후의 수단)
                 num_match = re.search(r'(\d+)', sheet_name)
                 month = int(num_match.group(1)) if num_match else 1
             
-            # 엑셀 읽기
-            df_temp = pd.read_excel(file, sheet_name=sheet_name, index_col='커리큘럼', engine='openpyxl')
+            # [✨ 핵심 수정] 'file' 대신 이미 열어둔 'xls'를 사용해야 오류가 안 납니다!
+            df_temp = pd.read_excel(xls, sheet_name=sheet_name, index_col='커리큘럼') # engine='openpyxl' 생략 가능 (이미 xls가 가지고 있음)
             
             df_melted = df_temp.reset_index().melt(id_vars='커리큘럼', var_name='연령', value_name='회원 수')
             df_melted['월'] = month
@@ -72,7 +69,7 @@ for i, file in enumerate(uploaded_files):
             all_data.append(df_melted)
             
     except Exception as e:
-        st.warning(f"⚠️ '{file.name}' 처리 중 일부 오류 발생: {e}")
+        st.warning(f"⚠️ '{file.name}' 처리 중 오류 발생: {e}")
 
     progress_bar.progress((i + 1) / total_files)
 
